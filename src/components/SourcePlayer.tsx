@@ -90,16 +90,16 @@ export const SourcePlayer: React.FC<SourcePlayerProps> = ({
   const outPct = duration > 0 ? (outPoint / duration) * 100 : 100;
 
   return (
-    <section className="rounded-xl border border-white/[0.08] bg-[#0C0F17] flex flex-col min-w-0 overflow-hidden">
+    <section className="rounded-xl border border-white/[0.08] bg-[#0C0F17] flex flex-col min-w-0 min-h-0 h-full overflow-hidden">
       {/* Monitor Header */}
-      <div className="px-4 py-2.5 border-b border-white/[0.07] flex items-center justify-between gap-3">
+      <div className="px-4 py-2 border-b border-white/[0.07] flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-xs font-semibold text-slate-200 whitespace-nowrap">
             Source Monitor
           </span>
-          {activeSource && (
-            <span className="text-xs text-slate-400 truncate">
-              {activeSource.name}
+          {hasMedia && (
+            <span className="px-2 py-0.5 rounded bg-white/[0.05] font-mono text-[11px] tabular-nums text-slate-300 whitespace-nowrap">
+              {formatTimecode(currentTime, true)} / {formatTimecode(duration, true)}
             </span>
           )}
         </div>
@@ -138,8 +138,8 @@ export const SourcePlayer: React.FC<SourcePlayerProps> = ({
         )}
       </div>
 
-      {/* Main Video Canvas */}
-      <div className="relative bg-[#05060A] flex-1 min-h-[260px] lg:min-h-[340px] flex items-center justify-center overflow-hidden">
+      {/* Main Video Canvas (clean video only, zero text overlays) */}
+      <div className="relative bg-[#05060A] flex-1 min-h-[140px] flex items-center justify-center overflow-hidden">
         {activeSource ? (
           <>
             {activeSource.sourceType === 'youtube' && activeSource.youtubeId ? (
@@ -184,12 +184,8 @@ export const SourcePlayer: React.FC<SourcePlayerProps> = ({
                 className="max-w-full max-h-full w-full h-full object-contain cursor-pointer"
               />
             )}
-            {/* Top-right clean timecode readout */}
-            <div className="absolute top-3 right-3 px-2.5 py-1 rounded-md bg-black/70 border border-white/10 font-mono text-xs tabular-nums text-slate-100 pointer-events-none">
-              {formatTimecode(currentTime, true)} / {formatTimecode(duration, true)}
-            </div>
             {videoError && (
-              <div className="absolute bottom-3 left-3 right-3 px-3 py-2 rounded-lg bg-red-950/90 border border-red-500/40 text-xs text-red-200">
+              <div className="absolute bottom-2 left-2 right-2 px-3 py-2 rounded-lg bg-red-950/90 border border-red-500/40 text-xs text-red-200">
                 {videoError}
               </div>
             )}
@@ -216,8 +212,8 @@ export const SourcePlayer: React.FC<SourcePlayerProps> = ({
         )}
       </div>
 
-      {/* Seek Bar with In/Out Highlight */}
-      <div className="px-4 pt-3 pb-2 border-t border-white/[0.07] bg-[#0B0E16]">
+      {/* Seek Bar & Pinned Playback/Trim Controls */}
+      <div className="px-4 pt-2.5 pb-2.5 border-t border-white/[0.07] bg-[#0B0E16] shrink-0">
         <div className="relative h-6 flex items-center">
           <div className="absolute inset-x-0 h-1.5 rounded-full bg-white/10 overflow-hidden pointer-events-none">
             <div

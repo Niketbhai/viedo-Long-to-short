@@ -467,10 +467,6 @@ export const FacecamCropModal: React.FC<FacecamCropModalProps> = ({
                       <div className="absolute top-2/3 left-0 right-0 h-px bg-white/20" />
                     </div>
 
-                    <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-violet-600/90 text-[10px] font-semibold text-white pointer-events-none">
-                      Facecam Box
-                    </span>
-
                     {/* 8 Resize Handles */}
                     <div
                       onPointerDown={(e) => startDrag('nw', e)}

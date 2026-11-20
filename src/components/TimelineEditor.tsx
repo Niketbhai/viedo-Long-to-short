@@ -179,19 +179,19 @@ export const TimelineEditor: React.FC<TimelineEditorProps> = ({
       <div className="flex overflow-hidden">
         {/* Left Track Labels */}
         <div className="w-24 sm:w-28 shrink-0 border-r border-white/[0.07] bg-[#0A0C12] select-none">
-          <div className="h-7 border-b border-white/[0.06] px-3 flex items-center text-[10px] font-mono text-slate-500">
+          <div className="h-6 border-b border-white/[0.06] px-3 flex items-center text-[10px] font-mono text-slate-500">
             TIME
           </div>
-          <div className="h-9 border-b border-white/[0.06] px-3 flex items-center text-[11px] font-medium text-slate-300">
+          <div className="h-8 border-b border-white/[0.06] px-3 flex items-center text-[11px] font-medium text-slate-300">
             Segments
           </div>
-          <div className="h-9 border-b border-white/[0.06] px-3 flex items-center text-[11px] font-medium text-sky-300">
+          <div className="h-8 border-b border-white/[0.06] px-3 flex items-center text-[11px] font-medium text-sky-300">
             Gameplay
           </div>
-          <div className="h-9 border-b border-white/[0.06] px-3 flex items-center text-[11px] font-medium text-violet-300">
+          <div className="h-8 border-b border-white/[0.06] px-3 flex items-center text-[11px] font-medium text-violet-300">
             Facecam
           </div>
-          <div className="h-9 px-3 flex items-center text-[11px] font-medium text-slate-300">
+          <div className="h-8 px-3 flex items-center text-[11px] font-medium text-slate-300">
             Shorts Clips
           </div>
         </div>
@@ -206,7 +206,7 @@ export const TimelineEditor: React.FC<TimelineEditorProps> = ({
             {/* Time Ruler */}
             <div
               onPointerDown={handleRulerPointerDown}
-              className="relative h-7 border-b border-white/[0.07] bg-[#0B0E16] cursor-pointer"
+              className="relative h-6 border-b border-white/[0.07] bg-[#0B0E16] cursor-pointer"
             >
               {ticks.map((t) => {
                 const leftPct = (t / safeDuration) * 100;
@@ -232,7 +232,7 @@ export const TimelineEditor: React.FC<TimelineEditorProps> = ({
                   left: `${inPct}%`,
                   width: `${Math.max(0.4, outPct - inPct)}%`,
                 }}
-                className="absolute top-7 bottom-0 bg-violet-500/[0.08] border-x border-sky-400/70 pointer-events-none z-10"
+                className="absolute top-6 bottom-0 bg-violet-500/[0.08] border-x border-sky-400/70 pointer-events-none z-10"
               >
                 {/* Draggable In Handle */}
                 <div
@@ -257,7 +257,7 @@ export const TimelineEditor: React.FC<TimelineEditorProps> = ({
             {/* Track 1: Segments (Split / Delete Segment) */}
             <div
               onPointerDown={handleRulerPointerDown}
-              className="relative h-9 border-b border-white/[0.06] cursor-pointer"
+              className="relative h-8 border-b border-white/[0.06] cursor-pointer"
             >
               {duration > 0 &&
                 segments.map((seg) => {
@@ -281,7 +281,7 @@ export const TimelineEditor: React.FC<TimelineEditorProps> = ({
                       }}
                       style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                       title={`${seg.label} (${formatTimecode(seg.start)} – ${formatTimecode(seg.end)}). Double-click to select range.`}
-                      className={`absolute top-1.5 bottom-1.5 rounded px-2 text-left text-[10px] font-medium truncate transition-colors cursor-pointer ${
+                      className={`absolute top-1 bottom-1 rounded px-2 text-left text-[10px] font-medium truncate transition-colors cursor-pointer ${
                         isSel
                           ? 'bg-sky-500/30 border border-sky-400 text-white'
                           : 'bg-white/[0.07] border border-white/10 text-slate-300 hover:bg-white/[0.12]'
@@ -296,7 +296,7 @@ export const TimelineEditor: React.FC<TimelineEditorProps> = ({
             {/* Track 2: Gameplay */}
             <div
               onPointerDown={handleRulerPointerDown}
-              className="relative h-9 border-b border-white/[0.06] cursor-pointer"
+              className="relative h-8 border-b border-white/[0.06] cursor-pointer"
             >
               {gameplay && (
                 <div
@@ -304,7 +304,7 @@ export const TimelineEditor: React.FC<TimelineEditorProps> = ({
                     left: '0%',
                     width: `${clamp((gameplay.duration / safeDuration) * 100, 1, 100)}%`,
                   }}
-                  className="absolute top-1.5 bottom-1.5 rounded bg-sky-500/20 border border-sky-400/40 px-2 flex items-center text-[10px] text-sky-200 truncate pointer-events-none"
+                  className="absolute top-1 bottom-1 rounded bg-sky-500/20 border border-sky-400/40 px-2 flex items-center text-[10px] text-sky-200 truncate pointer-events-none"
                 >
                   {gameplay.name}
                 </div>
@@ -314,7 +314,7 @@ export const TimelineEditor: React.FC<TimelineEditorProps> = ({
             {/* Track 3: Facecam */}
             <div
               onPointerDown={handleRulerPointerDown}
-              className="relative h-9 border-b border-white/[0.06] cursor-pointer"
+              className="relative h-8 border-b border-white/[0.06] cursor-pointer"
             >
               {facecam && (
                 <div
@@ -322,7 +322,7 @@ export const TimelineEditor: React.FC<TimelineEditorProps> = ({
                     left: `${clamp(((-facecamSyncOffset) / safeDuration) * 100, -50, 95)}%`,
                     width: `${clamp((facecam.duration / safeDuration) * 100, 1, 100)}%`,
                   }}
-                  className="absolute top-1.5 bottom-1.5 rounded bg-violet-500/20 border border-violet-400/40 px-2 flex items-center text-[10px] text-violet-200 truncate pointer-events-none"
+                  className="absolute top-1 bottom-1 rounded bg-violet-500/20 border border-violet-400/40 px-2 flex items-center text-[10px] text-violet-200 truncate pointer-events-none"
                 >
                   {facecam.name}
                 </div>
@@ -332,7 +332,7 @@ export const TimelineEditor: React.FC<TimelineEditorProps> = ({
             {/* Track 4: Created Shorts Clips */}
             <div
               onPointerDown={handleRulerPointerDown}
-              className="relative h-9 cursor-pointer"
+              className="relative h-8 cursor-pointer"
             >
               {clips.map((clip) => {
                 const leftPct = (clip.startTime / safeDuration) * 100;

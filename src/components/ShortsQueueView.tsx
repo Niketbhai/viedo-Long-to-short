@@ -121,15 +121,23 @@ export const ShortsQueueView: React.FC<ShortsQueueViewProps> = ({
                     <span>Preview</span>
                   </button>
 
-                  {clip.exportedUrl ? (
-                    <a
-                      href={clip.exportedUrl}
-                      download={`${clip.name.toLowerCase().replace(/[^a-z0-9_-]+/g, '_') || 'clipforge_short'}.${clip.exportedExt || 'mp4'}`}
-                      className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Download</span>
-                    </a>
+                  {clip.exportedUrl || clip.exportedDownloadUrl ? (
+                    (() => {
+                      const safeDownloadName = `${clip.name.toLowerCase().replace(/[^a-z0-9_-]+/g, '_') || 'clipforge_short'}.${clip.exportedExt || 'mp4'}`;
+                      const downloadHref = clip.exportedDownloadUrl
+                        ? `${clip.exportedDownloadUrl}?name=${encodeURIComponent(safeDownloadName)}`
+                        : clip.exportedUrl;
+                      return (
+                        <a
+                          href={downloadHref}
+                          download={safeDownloadName}
+                          className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Download</span>
+                        </a>
+                      );
+                    })()
                   ) : (
                     <button
                       type="button"

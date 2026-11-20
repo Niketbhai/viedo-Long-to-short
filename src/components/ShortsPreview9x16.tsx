@@ -220,7 +220,7 @@ export const ShortsPreview9x16: React.FC<ShortsPreview9x16Props> = ({
   const isDurationOptimal = selectedDuration > 0 && selectedDuration <= 60;
 
   return (
-    <aside className="rounded-xl border border-white/[0.08] bg-[#0C0F17] flex flex-col min-h-0 overflow-hidden">
+    <aside className="rounded-xl border border-white/[0.08] bg-[#0C0F17] flex flex-col min-h-0 h-full overflow-hidden">
       {/* Header */}
       <div className="px-4 py-2.5 border-b border-white/[0.07] flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-slate-200 whitespace-nowrap">
@@ -322,10 +322,6 @@ export const ShortsPreview9x16: React.FC<ShortsPreview9x16Props> = ({
                     </span>
                   </div>
                 )}
-
-                <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/65 text-[10px] font-medium text-sky-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                  Gameplay · Drag / Scroll
-                </span>
               </div>
             )}
 
@@ -413,10 +409,6 @@ export const ShortsPreview9x16: React.FC<ShortsPreview9x16Props> = ({
                     </button>
                   </div>
                 )}
-
-                <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/65 text-[10px] font-medium text-violet-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                  Facecam · Drag / Scroll
-                </span>
               </div>
             )}
 

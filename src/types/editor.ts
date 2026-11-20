@@ -70,6 +70,7 @@ export interface ShortClip {
   layout: LayoutConfig;
   createdAt: number;
   exportedUrl?: string;
+  exportedDownloadUrl?: string;
   exportedMimeType?: string;
   exportedExt?: string;
 }

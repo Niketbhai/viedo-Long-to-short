@@ -87,7 +87,10 @@ export interface ExportShortParams {
 
 export interface ExportResult {
   blobUrl: string;
+  downloadUrl?: string;
+  previewUrl?: string;
   blob: Blob;
+  size: number;
   mimeType: string;
   extension: 'mp4' | 'webm';
   width: number;
@@ -673,27 +676,64 @@ export async function exportShortVideo(params: ExportShortParams): Promise<Expor
   let finalBlob = recorded.blob;
   let finalMime = recorded.mimeType;
   let isMp4 = finalMime.toLowerCase().includes('mp4');
+  let downloadUrl: string | undefined;
+  let previewUrl: string | undefined;
+  let finalSize = finalBlob.size;
 
-  // If user requested MP4 and browser encoded WebM, transcode to universal H.264/AAC MP4 via server FFmpeg
+  // Transcode WebM -> universal H.264/AAC MP4 & persist for reliable HTTP attachment download
   if (preferMp4 && !isMp4 && !signal?.aborted) {
     onProgress(0.96, clipDuration, 'Converting to MP4...');
     try {
       const resp = await fetch('/api/convert-mp4', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Return-Json': '1',
+        },
+        body: finalBlob,
+        signal,
+      });
+      if (resp.ok) {
+        const data = (await resp.json()) as {
+          downloadUrl?: string;
+          previewUrl?: string;
+          size?: number;
+        };
+        if (data.downloadUrl) {
+          downloadUrl = data.downloadUrl;
+          previewUrl = data.previewUrl;
+          finalSize = data.size || finalSize;
+          finalMime = 'video/mp4';
+          isMp4 = true;
+        }
+      }
+    } catch {
+      // Fall back gracefully to local WebM blob
+    }
+  } else if (!signal?.aborted) {
+    onProgress(0.96, clipDuration, 'Preparing download...');
+    try {
+      const ext = isMp4 ? 'mp4' : 'webm';
+      const resp = await fetch(`/api/save-export?ext=${ext}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },
         body: finalBlob,
         signal,
       });
       if (resp.ok) {
-        const mp4Blob = await resp.blob();
-        if (mp4Blob.size > 0) {
-          finalBlob = mp4Blob;
-          finalMime = 'video/mp4';
-          isMp4 = true;
+        const data = (await resp.json()) as {
+          downloadUrl?: string;
+          previewUrl?: string;
+          size?: number;
+        };
+        if (data.downloadUrl) {
+          downloadUrl = data.downloadUrl;
+          previewUrl = data.previewUrl;
+          finalSize = data.size || finalSize;
         }
       }
     } catch {
-      // Fall back gracefully to the already valid WebM blob
+      // Fall back gracefully to local blob
     }
   }
 
@@ -702,7 +742,10 @@ export async function exportShortVideo(params: ExportShortParams): Promise<Expor
   const blobUrl = URL.createObjectURL(finalBlob);
   return {
     blobUrl,
+    downloadUrl,
+    previewUrl,
     blob: finalBlob,
+    size: finalSize,
     mimeType: finalMime,
     extension: isMp4 ? 'mp4' : 'webm',
     width,

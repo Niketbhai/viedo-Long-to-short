@@ -399,9 +399,11 @@ async function startServer() {
         return;
       }
 
+      const returnJson = req.headers['x-return-json'] === '1';
       const token = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const inPath = path.join(MEDIA_DIR, `raw_${token}.webm`);
-      const outPath = path.join(MEDIA_DIR, `short_${token}.mp4`);
+      const outFileId = `short_${token}.mp4`;
+      const outPath = path.join(MEDIA_DIR, outFileId);
 
       try {
         fs.writeFileSync(inPath, body);
@@ -425,23 +427,99 @@ async function startServer() {
           '+faststart',
           outPath,
         ]);
+
+        const stat = fs.statSync(outPath);
+        if (returnJson) {
+          res.json({
+            fileId: outFileId,
+            downloadUrl: `/api/download/${outFileId}`,
+            previewUrl: `/api/media/${outFileId}`,
+            size: stat.size,
+            mimeType: 'video/mp4',
+            extension: 'mp4',
+          });
+          return;
+        }
+
         const mp4Buf = fs.readFileSync(outPath);
         res.setHeader('Content-Type', 'video/mp4');
         res.send(mp4Buf);
       } catch (err) {
+        try {
+          if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+        } catch {
+          // ignore
+        }
         res.status(500).json({
           error: err instanceof Error ? err.message : 'MP4 conversion failed',
         });
       } finally {
         try {
           if (fs.existsSync(inPath)) fs.unlinkSync(inPath);
-          if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+          if (!returnJson && fs.existsSync(outPath)) fs.unlinkSync(outPath);
         } catch {
           // ignore cleanup
         }
       }
     }
   );
+
+  // Save already-encoded Short (MP4 or WebM) for reliable HTTP attachment download
+  app.post(
+    '/api/save-export',
+    express.raw({ type: '*/*', limit: '250mb' }),
+    (req, res) => {
+      const body = req.body as Buffer | undefined;
+      if (!body || !Buffer.isBuffer(body) || body.length === 0) {
+        res.status(400).json({ error: 'Empty video payload' });
+        return;
+      }
+
+      const rawExt = typeof req.query.ext === 'string' ? req.query.ext.toLowerCase() : 'mp4';
+      const ext = rawExt === 'webm' ? 'webm' : 'mp4';
+      const token = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const fileId = `short_${token}.${ext}`;
+      const outPath = path.join(MEDIA_DIR, fileId);
+
+      try {
+        fs.writeFileSync(outPath, body);
+        res.json({
+          fileId,
+          downloadUrl: `/api/download/${fileId}`,
+          previewUrl: `/api/media/${fileId}`,
+          size: body.length,
+          mimeType: ext === 'mp4' ? 'video/mp4' : 'video/webm',
+          extension: ext,
+        });
+      } catch (err) {
+        res.status(500).json({
+          error: err instanceof Error ? err.message : 'Failed to save export',
+        });
+      }
+    }
+  );
+
+  // Direct HTTP attachment download endpoint (works reliably inside iframes and all browsers)
+  app.get('/api/download/:fileId', (req, res) => {
+    const fileId = req.params.fileId;
+    if (!fileId || !/^[a-zA-Z0-9_.-]+$/.test(fileId)) {
+      res.status(400).send('Invalid file id');
+      return;
+    }
+
+    const filePath = path.join(MEDIA_DIR, fileId);
+    if (!fs.existsSync(filePath)) {
+      res.status(404).send('Exported file expired or not found');
+      return;
+    }
+
+    const rawName = typeof req.query.name === 'string' ? req.query.name.trim() : '';
+    const safeName = rawName
+      ? rawName.replace(/[^a-zA-Z0-9_.-]+/g, '_')
+      : fileId;
+    res.setHeader('Cache-Control', 'no-store');
+    res.download(filePath, safeName);
+  });
 
   if (IS_PROD) {
     const distDir = path.resolve(process.cwd(), 'dist');

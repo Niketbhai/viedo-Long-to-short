@@ -896,12 +896,18 @@ export default function App() {
   );
 
   const handleSaveClipExport = useCallback(
-    (clipId: string, url: string, mimeType: string, ext: string) => {
+    (clipId: string, url: string, mimeType: string, ext: string, downloadUrl?: string) => {
       setPresent((prev) => ({
         ...prev,
         clips: prev.clips.map((c) =>
           c.id === clipId
-            ? { ...c, exportedUrl: url, exportedMimeType: mimeType, exportedExt: ext }
+            ? {
+                ...c,
+                exportedUrl: url,
+                exportedDownloadUrl: downloadUrl,
+                exportedMimeType: mimeType,
+                exportedExt: ext,
+              }
             : c
         ),
       }));
@@ -1002,7 +1008,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen lg:h-screen flex flex-col bg-[#07080D] text-slate-100 overflow-x-hidden lg:overflow-hidden">
+    <div className="min-h-screen [@media(min-width:1024px)_and_(min-height:680px)]:h-screen flex flex-col bg-[#07080D] text-slate-100 overflow-x-hidden [@media(min-width:1024px)_and_(min-height:680px)]:overflow-hidden">
       <Header
         activeView={activeView}
         onSelectView={handleSelectView}
@@ -1021,7 +1027,7 @@ export default function App() {
           onRenameClip={handleRenameClip}
         />
       ) : (
-        <main className="flex-1 min-h-0 p-3 flex flex-col gap-3 overflow-y-auto lg:overflow-hidden">
+        <main className="flex-1 min-h-0 p-3 flex flex-col gap-3 overflow-y-auto [@media(min-width:1024px)_and_(min-height:680px)]:overflow-hidden">
           {/* Top Workstation Grid: Media/Clips + Source Monitor + 9:16 Preview */}
           <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[275px_minmax(0,1fr)_350px] gap-3">
             <MediaAndClipsSidebar
