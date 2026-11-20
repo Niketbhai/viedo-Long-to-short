@@ -1,0 +1,6 @@
+{
+  "name": "ClipForge – Long Video to Shorts Editor",
+  "description": "Browser-based dark studio video editor to convert long gaming videos and livestreams into 9:16 vertical Shorts with synchronized gameplay and facecam split-screen.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
