@@ -1180,6 +1180,7 @@ export default function App() {
         currentLayout={present.layout}
         onSaveClipExport={handleSaveClipExport}
         onQuickUpload={handleQuickUpload}
+        onOpenImport={() => setIsImportOpen(true)}
       />
 
       <ShortcutsModal

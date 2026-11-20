@@ -46,6 +46,7 @@ interface ExportModalProps {
     downloadUrl?: string
   ) => void;
   onQuickUpload: (role: VideoRole, file: File) => void;
+  onOpenImport: () => void;
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
@@ -61,6 +62,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   currentLayout,
   onSaveClipExport,
   onQuickUpload,
+  onOpenImport,
 }) => {
   const [selectedTarget, setSelectedTarget] = useState<string>('current');
   const [resolution, setResolution] = useState<ExportResolution>('1080p');
@@ -460,6 +462,17 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                         />
                       </label>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenImport();
+                      }}
+                      className="px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-slate-100 font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Film className="w-3.5 h-3.5" />
+                      <span>Use Kick / Direct MP4 Link</span>
+                    </button>
                   </div>
                 </div>
               )}
