@@ -289,15 +289,35 @@ export const MediaAndClipsSidebar: React.FC<MediaAndClipsSidebarProps> = ({
                     </button>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => onExportClip(clip.id)}
-                    title="Export this short clip"
-                    className="px-2.5 py-1.5 rounded-md text-[11px] font-medium bg-violet-600/25 hover:bg-violet-600/40 text-violet-200 inline-flex items-center gap-1 transition-colors whitespace-nowrap cursor-pointer"
-                  >
-                    <Download className="w-3 h-3" />
-                    <span>Export</span>
-                  </button>
+                  {clip.exportedDownloadUrl || clip.exportedUrl ? (
+                    (() => {
+                      const safeName = `${clip.name.toLowerCase().replace(/[^a-z0-9_-]+/g, '_') || 'clipforge_short'}.${clip.exportedExt || 'mp4'}`;
+                      const dlHref = clip.exportedDownloadUrl
+                        ? `${clip.exportedDownloadUrl}?name=${encodeURIComponent(safeName)}`
+                        : clip.exportedUrl;
+                      return (
+                        <a
+                          href={dlHref}
+                          download={safeName}
+                          title="Download cut Short"
+                          className="px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-emerald-600/30 hover:bg-emerald-600/45 text-emerald-200 inline-flex items-center gap-1 transition-colors whitespace-nowrap cursor-pointer"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>Save</span>
+                        </a>
+                      );
+                    })()
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onExportClip(clip.id)}
+                      title="Direct cut & download this short clip"
+                      className="px-2.5 py-1.5 rounded-md text-[11px] font-medium bg-violet-600/25 hover:bg-violet-600/40 text-violet-200 inline-flex items-center gap-1 transition-colors whitespace-nowrap cursor-pointer"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Export</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"

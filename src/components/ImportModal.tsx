@@ -159,6 +159,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         width: meta.width,
         height: meta.height,
         fileSize: file.size,
+        file,
         corsSafe: true,
       });
       setStatusMsg(`Loaded ${role} video: ${file.name}`);

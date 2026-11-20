@@ -21,6 +21,7 @@ import {
   VideoSource,
 } from './types/editor';
 import { generateLocalDemoPair } from './utils/demoGenerator';
+import { prewarmServerSource } from './utils/directCutExporter';
 import { DEFAULT_LAYOUT, hasActiveCrop } from './utils/layoutGeometry';
 import { clamp, DEFAULT_FPS, formatShortDuration, formatTimecode, generateId } from './utils/time';
 
@@ -464,6 +465,10 @@ export default function App() {
       const isFirstOrPrimaryReplace =
         role === 'gameplay' || (role === 'facecam' && !gameplay);
 
+      if (source.url.startsWith('blob:')) {
+        prewarmServerSource(source);
+      }
+
       if (role === 'gameplay') {
         setGameplay(source);
         setMonitorRole('gameplay');
@@ -553,6 +558,7 @@ export default function App() {
           width: probe.videoWidth || 1920,
           height: probe.videoHeight || 1080,
           fileSize: file.size,
+          file,
           corsSafe: true,
         });
         showToast(`Loaded ${role}: ${file.name}`);

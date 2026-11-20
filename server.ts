@@ -79,10 +79,141 @@ function runFfmpegCapture(args: string[]): Promise<void> {
       if (code === 0) {
         resolve();
       } else {
-        reject(new Error(`FFmpeg capture failed (code ${code}): ${stderr.slice(-300)}`));
+        reject(new Error(`FFmpeg failed (code ${code}): ${stderr.slice(-400)}`));
       }
     });
   });
+}
+
+interface MediaProbeInfo {
+  width: number;
+  height: number;
+  hasAudio: boolean;
+}
+
+function probeMediaInfo(inputPathOrUrl: string): Promise<MediaProbeInfo> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      '/usr/bin/ffprobe',
+      ['-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-of', 'json', inputPathOrUrl],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    );
+    let stdout = '';
+    proc.stdout.on('data', (chunk) => {
+      stdout += String(chunk);
+    });
+    proc.on('error', () => resolve({ width: 1920, height: 1080, hasAudio: true }));
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        resolve({ width: 1920, height: 1080, hasAudio: true });
+        return;
+      }
+      try {
+        const parsed = JSON.parse(stdout) as {
+          streams?: Array<{ codec_type?: string; width?: number; height?: number }>;
+        };
+        const streams = parsed.streams || [];
+        const videoStream = streams.find((s) => s.codec_type === 'video' && (s.width || 0) > 0);
+        const hasAudio = streams.some((s) => s.codec_type === 'audio');
+        resolve({
+          width: videoStream?.width || 1920,
+          height: videoStream?.height || 1080,
+          hasAudio,
+        });
+      } catch {
+        resolve({ width: 1920, height: 1080, hasAudio: true });
+      }
+    });
+  });
+}
+
+function resolveCutSourceInput(src?: { serverSourceId?: string; url?: string }): string | null {
+  if (!src) return null;
+  if (typeof src.serverSourceId === 'string' && /^[a-zA-Z0-9_.-]+$/.test(src.serverSourceId)) {
+    const candidate = path.join(MEDIA_DIR, src.serverSourceId);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  const rawUrl = typeof src.url === 'string' ? src.url.trim() : '';
+  if (!rawUrl) return null;
+  if (rawUrl.startsWith('/api/media/')) {
+    const fileName = rawUrl.slice('/api/media/'.length).split('?')[0];
+    if (/^[a-zA-Z0-9_.-]+$/.test(fileName)) {
+      const candidate = path.join(MEDIA_DIR, fileName);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  if (rawUrl.startsWith('/api/hls-proxy?')) {
+    try {
+      const parsed = new URL('http://localhost' + rawUrl);
+      const target = parsed.searchParams.get('url');
+      if (target && (target.startsWith('https://') || target.startsWith('http://'))) {
+        return target;
+      }
+    } catch {
+      return null;
+    }
+  }
+  if (rawUrl.startsWith('https://') || rawUrl.startsWith('http://')) {
+    return rawUrl;
+  }
+  return null;
+}
+
+function evenDim(n: number, minVal = 2): number {
+  return Math.max(minVal, Math.round(n / 2) * 2);
+}
+
+interface CutTransform {
+  zoom?: number;
+  panX?: number;
+  panY?: number;
+  crop?: { x: number; y: number; width: number; height: number };
+}
+
+function buildCropScaleFilter(
+  srcW: number,
+  srcH: number,
+  zoneW: number,
+  zoneH: number,
+  transform: CutTransform | undefined,
+  fps: number
+): string {
+  const safeSrcW = srcW > 0 ? srcW : 1920;
+  const safeSrcH = srcH > 0 ? srcH : 1080;
+
+  const rawCrop = transform?.crop;
+  const cx = rawCrop ? Math.min(0.94, Math.max(0, rawCrop.x)) : 0;
+  const cy = rawCrop ? Math.min(0.94, Math.max(0, rawCrop.y)) : 0;
+  const cw = rawCrop ? Math.min(1 - cx, Math.max(0.06, rawCrop.width)) : 1;
+  const ch = rawCrop ? Math.min(1 - cy, Math.max(0.06, rawCrop.height)) : 1;
+
+  const sx = cx * safeSrcW;
+  const sy = cy * safeSrcH;
+  const sw = cw * safeSrcW;
+  const sh = ch * safeSrcH;
+
+  const zoom = Math.max(1, Number(transform?.zoom || 1));
+  const panX = Math.min(1, Math.max(-1, Number(transform?.panX || 0)));
+  const panY = Math.min(1, Math.max(-1, Number(transform?.panY || 0)));
+
+  const baseScale = Math.max(zoneW / sw, zoneH / sh);
+  const scale = baseScale * zoom;
+
+  const visW = Math.min(sw, zoneW / scale);
+  const visH = Math.min(sh, zoneH / scale);
+
+  const overflowX = Math.max(0, sw - visW);
+  const overflowY = Math.max(0, sh - visH);
+
+  const rawCropX = sx + (overflowX * (1 - panX)) / 2;
+  const rawCropY = sy + (overflowY * (1 - panY)) / 2;
+
+  const cropW = Math.min(safeSrcW, Math.max(2, Math.round(visW)));
+  const cropH = Math.min(safeSrcH, Math.max(2, Math.round(visH)));
+  const cropX = Math.min(Math.max(0, Math.round(rawCropX)), Math.max(0, safeSrcW - cropW));
+  const cropY = Math.min(Math.max(0, Math.round(rawCropY)), Math.max(0, safeSrcH - cropH));
+
+  return `crop=${cropW}:${cropH}:${cropX}:${cropY},scale=${zoneW}:${zoneH}:flags=lanczos,setsar=1,fps=${fps},format=yuv420p`;
 }
 
 async function startServer() {
@@ -498,6 +629,366 @@ async function startServer() {
       }
     }
   );
+
+  // Stream-upload local video files to temporary disk storage once for instant FFmpeg cutting
+  app.post('/api/upload-source', (req, res) => {
+    const rawExt = typeof req.query.ext === 'string' ? req.query.ext.toLowerCase() : 'mp4';
+    const ext = ['mp4', 'webm', 'mov', 'mkv', 'm4v', 'ogg'].includes(rawExt) ? rawExt : 'mp4';
+    const token = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const fileId = `src_${token}.${ext}`;
+    const outPath = path.join(MEDIA_DIR, fileId);
+
+    const writeStream = fs.createWriteStream(outPath);
+    let totalBytes = 0;
+    let finished = false;
+
+    const cleanupOnError = (msg: string, status = 500) => {
+      if (finished) return;
+      finished = true;
+      try {
+        writeStream.destroy();
+        if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+      } catch {
+        // ignore
+      }
+      res.status(status).json({ error: msg });
+    };
+
+    req.on('data', (chunk: Buffer) => {
+      totalBytes += chunk.length;
+    });
+    req.on('aborted', () => cleanupOnError('Upload aborted', 499));
+    req.on('error', (err) => cleanupOnError(err.message || 'Upload stream error'));
+    writeStream.on('error', (err) => cleanupOnError(err.message || 'Disk write error'));
+
+    writeStream.on('finish', () => {
+      if (finished) return;
+      finished = true;
+      if (totalBytes === 0) {
+        try {
+          if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+        } catch {
+          // ignore
+        }
+        res.status(400).json({ error: 'Empty video file' });
+        return;
+      }
+      res.json({
+        sourceId: fileId,
+        mediaUrl: `/api/media/${fileId}`,
+        size: totalBytes,
+      });
+    });
+
+    req.pipe(writeStream);
+  });
+
+  // Direct FFmpeg clip cutting + 9:16 split-screen compositing (zero screen recording!)
+  app.post('/api/cut-export', async (req, res) => {
+    const body = (req.body || {}) as {
+      gameplay?: { serverSourceId?: string; url?: string };
+      facecam?: { serverSourceId?: string; url?: string; derivedFromGameplay?: boolean };
+      startTime?: number;
+      endTime?: number;
+      layout?: {
+        mode?: 'gameplay-top' | 'facecam-top' | 'side-by-side' | 'full-gameplay' | 'full-facecam';
+        splitRatio?: number;
+        gameplayTransform?: CutTransform;
+        facecamTransform?: CutTransform;
+        gameplayVolume?: number;
+        facecamVolume?: number;
+        gameplayMuted?: boolean;
+        facecamMuted?: boolean;
+        facecamSyncOffset?: number;
+        facecamActiveRange?: { start: number; end: number } | null;
+      };
+      resolution?: '720p' | '1080p';
+      fps?: 30 | 60;
+      extension?: 'mp4' | 'webm';
+    };
+
+    const startTime = Math.max(0, Number(body.startTime || 0));
+    const endTime = Math.max(startTime + 0.2, Number(body.endTime || startTime + 1));
+    const duration = Math.max(0.2, Number((endTime - startTime).toFixed(3)));
+    const outW = body.resolution === '720p' ? 720 : 1080;
+    const outH = body.resolution === '720p' ? 1280 : 1920;
+    const fps = body.fps === 60 ? 60 : 30;
+    const ext = body.extension === 'webm' ? 'webm' : 'mp4';
+
+    const layout = body.layout || {};
+    const mode = layout.mode || 'gameplay-top';
+    const ratio = Math.min(0.85, Math.max(0.15, Number(layout.splitRatio ?? 0.5)));
+
+    const gpInput = resolveCutSourceInput(body.gameplay);
+    let fcInput = resolveCutSourceInput(body.facecam);
+    if (!fcInput && body.facecam?.derivedFromGameplay && gpInput) {
+      fcInput = gpInput;
+    }
+
+    if (!gpInput && !fcInput) {
+      res.status(400).json({ error: 'No playable server-accessible gameplay or facecam source provided.' });
+      return;
+    }
+
+    // Compute exact even-dimension 9:16 zones
+    let gpZone: { width: number; height: number } | null = null;
+    let fcZone: { width: number; height: number } | null = null;
+    if (mode === 'gameplay-top') {
+      const topH = evenDim(outH * ratio);
+      gpZone = { width: outW, height: topH };
+      fcZone = { width: outW, height: outH - topH };
+    } else if (mode === 'facecam-top') {
+      const topH = evenDim(outH * ratio);
+      fcZone = { width: outW, height: topH };
+      gpZone = { width: outW, height: outH - topH };
+    } else if (mode === 'side-by-side') {
+      const leftW = evenDim(outW * ratio);
+      gpZone = { width: leftW, height: outH };
+      fcZone = { width: outW - leftW, height: outH };
+    } else if (mode === 'full-gameplay') {
+      gpZone = { width: outW, height: outH };
+    } else if (mode === 'full-facecam') {
+      fcZone = { width: outW, height: outH };
+    }
+
+    const token = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const outFileId = `short_${token}.${ext}`;
+    const outPath = path.join(MEDIA_DIR, outFileId);
+
+    try {
+      const gpProbe = gpInput ? await probeMediaInfo(gpInput) : null;
+      const fcProbe =
+        fcInput && fcInput !== gpInput
+          ? await probeMediaInfo(fcInput)
+          : fcInput
+            ? gpProbe
+            : null;
+
+      const args: string[] = ['-y'];
+      let nextInputIdx = 0;
+
+      let gpIdx = -1;
+      let fcIdx = -1;
+
+      const syncOffset = Number(layout.facecamSyncOffset || 0);
+      const sameFileAndOffsetZero =
+        Boolean(gpInput && fcInput && gpInput === fcInput && Math.abs(syncOffset) < 0.01);
+
+      if (gpInput) {
+        gpIdx = nextInputIdx++;
+        args.push('-ss', String(startTime), '-t', String(duration), '-i', gpInput);
+      }
+
+      if (fcInput) {
+        if (sameFileAndOffsetZero && gpIdx !== -1) {
+          fcIdx = gpIdx;
+        } else {
+          fcIdx = nextInputIdx++;
+          const fcStart = startTime + syncOffset;
+          if (fcStart >= 0) {
+            args.push('-ss', String(fcStart), '-t', String(duration), '-i', fcInput);
+          } else {
+            args.push(
+              '-ss',
+              '0',
+              '-t',
+              String(Math.max(0.1, duration + fcStart)),
+              '-i',
+              fcInput
+            );
+          }
+        }
+      }
+
+      const filters: string[] = [];
+
+      // Build gameplay zone video
+      let gpVideoPad: string | null = null;
+      if (gpZone) {
+        if (gpIdx !== -1 && gpProbe) {
+          const gpFilter = buildCropScaleFilter(
+            gpProbe.width,
+            gpProbe.height,
+            gpZone.width,
+            gpZone.height,
+            layout.gameplayTransform,
+            fps
+          );
+          filters.push(`[${gpIdx}:v]${gpFilter},setpts=PTS-STARTPTS[gp_zone]`);
+          gpVideoPad = '[gp_zone]';
+        } else {
+          filters.push(
+            `color=c=0x05060A:s=${gpZone.width}x${gpZone.height}:r=${fps}:d=${duration},format=yuv420p[gp_zone]`
+          );
+          gpVideoPad = '[gp_zone]';
+        }
+      }
+
+      // Build facecam zone video
+      let fcVideoPad: string | null = null;
+      if (fcZone) {
+        if (fcIdx !== -1 && fcProbe) {
+          const fcFilter = buildCropScaleFilter(
+            fcProbe.width,
+            fcProbe.height,
+            fcZone.width,
+            fcZone.height,
+            layout.facecamTransform,
+            fps
+          );
+          const fcStart = startTime + syncOffset;
+          const padPrefix =
+            !sameFileAndOffsetZero && fcStart < 0
+              ? `tpad=start_duration=${Math.abs(fcStart).toFixed(3)}:start_mode=clone,`
+              : '';
+
+          const range = layout.facecamActiveRange;
+          const relStart = range ? Math.max(0, range.start - startTime) : 0;
+          const relEnd = range ? Math.min(duration, range.end - startTime) : duration;
+
+          if (range && (relStart > 0.05 || relEnd < duration - 0.05)) {
+            filters.push(
+              `color=c=0x05060A:s=${fcZone.width}x${fcZone.height}:r=${fps}:d=${duration},format=yuv420p[fc_bg]`
+            );
+            filters.push(`[${fcIdx}:v]${padPrefix}${fcFilter},setpts=PTS-STARTPTS[fc_fg]`);
+            if (relEnd <= relStart) {
+              filters.push(`[fc_bg]null[fc_zone]`);
+            } else {
+              filters.push(
+                `[fc_bg][fc_fg]overlay=0:0:enable='between(t,${relStart.toFixed(3)},${relEnd.toFixed(3)})'[fc_zone]`
+              );
+            }
+          } else {
+            filters.push(`[${fcIdx}:v]${padPrefix}${fcFilter},setpts=PTS-STARTPTS[fc_zone]`);
+          }
+          fcVideoPad = '[fc_zone]';
+        } else {
+          filters.push(
+            `color=c=0x05060A:s=${fcZone.width}x${fcZone.height}:r=${fps}:d=${duration},format=yuv420p[fc_zone]`
+          );
+          fcVideoPad = '[fc_zone]';
+        }
+      }
+
+      // Combine video zones into [vout]
+      if (mode === 'gameplay-top' && gpVideoPad && fcVideoPad) {
+        filters.push(`${gpVideoPad}${fcVideoPad}vstack=inputs=2[vout]`);
+      } else if (mode === 'facecam-top' && fcVideoPad && gpVideoPad) {
+        filters.push(`${fcVideoPad}${gpVideoPad}vstack=inputs=2[vout]`);
+      } else if (mode === 'side-by-side' && gpVideoPad && fcVideoPad) {
+        filters.push(`${gpVideoPad}${fcVideoPad}hstack=inputs=2[vout]`);
+      } else if (gpVideoPad) {
+        filters.push(`${gpVideoPad}null[vout]`);
+      } else if (fcVideoPad) {
+        filters.push(`${fcVideoPad}null[vout]`);
+      }
+
+      // Mix audio cleanly (with silent AAC fallback if video has no audio or all tracks muted)
+      const gpVol = Number(layout.gameplayVolume ?? 0.85);
+      const fcVol = Number(layout.facecamVolume ?? 1.0);
+      const useGpAudio = Boolean(gpIdx !== -1 && gpProbe?.hasAudio && !layout.gameplayMuted && gpVol > 0);
+      const useFcAudio = Boolean(
+        fcIdx !== -1 &&
+          fcProbe?.hasAudio &&
+          !layout.facecamMuted &&
+          fcVol > 0 &&
+          !(body.facecam?.derivedFromGameplay && useGpAudio)
+      );
+
+      const audioPads: string[] = [];
+      if (useGpAudio) {
+        filters.push(
+          `[${gpIdx}:a]aresample=48000:async=1:first_pts=0,volume=${gpVol.toFixed(3)},asetpts=PTS-STARTPTS[a_gp]`
+        );
+        audioPads.push('[a_gp]');
+      }
+      if (useFcAudio) {
+        const fcStart = startTime + syncOffset;
+        const delayMs = !sameFileAndOffsetZero && fcStart < 0 ? Math.round(Math.abs(fcStart) * 1000) : 0;
+        const delayFilter = delayMs > 0 ? `adelay=${delayMs}|${delayMs},` : '';
+        filters.push(
+          `[${fcIdx}:a]${delayFilter}aresample=48000:async=1:first_pts=0,volume=${fcVol.toFixed(3)},asetpts=PTS-STARTPTS[a_fc]`
+        );
+        audioPads.push('[a_fc]');
+      }
+
+      if (audioPads.length === 2) {
+        filters.push(`${audioPads[0]}${audioPads[1]}amix=inputs=2:duration=first:dropout_transition=0[aout]`);
+      } else if (audioPads.length === 1) {
+        filters.push(`${audioPads[0]}anull[aout]`);
+      } else {
+        filters.push(`anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${duration}[aout]`);
+      }
+
+      args.push('-filter_complex', filters.join(';'), '-map', '[vout]', '-map', '[aout]');
+
+      if (ext === 'webm') {
+        args.push(
+          '-c:v',
+          'libvpx-vp9',
+          '-deadline',
+          'realtime',
+          '-cpu-used',
+          '5',
+          '-crf',
+          '28',
+          '-b:v',
+          '0',
+          '-c:a',
+          'libopus',
+          '-b:a',
+          '160k',
+          '-t',
+          String(duration),
+          outPath
+        );
+      } else {
+        args.push(
+          '-c:v',
+          'libx264',
+          '-preset',
+          'veryfast',
+          '-crf',
+          '19',
+          '-pix_fmt',
+          'yuv420p',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '192k',
+          '-movflags',
+          '+faststart',
+          '-t',
+          String(duration),
+          outPath
+        );
+      }
+
+      await runFfmpegCapture(args);
+      const stat = fs.statSync(outPath);
+
+      res.json({
+        fileId: outFileId,
+        downloadUrl: `/api/download/${outFileId}`,
+        previewUrl: `/api/media/${outFileId}`,
+        size: stat.size,
+        mimeType: ext === 'webm' ? 'video/webm' : 'video/mp4',
+        extension: ext,
+        width: outW,
+        height: outH,
+        duration,
+      });
+    } catch (err) {
+      try {
+        if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+      } catch {
+        // ignore
+      }
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Direct FFmpeg cut failed.',
+      });
+    }
+  });
 
   // Direct HTTP attachment download endpoint (works reliably inside iframes and all browsers)
   app.get('/api/download/:fileId', (req, res) => {

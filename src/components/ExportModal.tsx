@@ -3,10 +3,9 @@ import {
   AlertCircle,
   CheckCircle2,
   Download,
-  ExternalLink,
   Film,
   Loader2,
-  MonitorPlay,
+  Scissors,
   Upload,
   X,
 } from 'lucide-react';
@@ -19,24 +18,14 @@ import {
   VideoRole,
   VideoSource,
 } from '../types/editor';
-import {
-  computeCropAndCover,
-  computeZoneBoxes,
-  LAYOUT_LABELS,
-} from '../utils/layoutGeometry';
+import { directCutExportShort } from '../utils/directCutExporter';
+import { LAYOUT_LABELS } from '../utils/layoutGeometry';
 import { formatShortDuration, formatTimecode } from '../utils/time';
 import {
   detectBestExportFormat,
   ExportResult,
   exportShortVideo,
 } from '../utils/videoExporter';
-import {
-  exportYouTubeViaTabCapture,
-  requestTabCaptureStream,
-  TabCaptureBlockedError,
-} from '../utils/youtubeExporter';
-import { SmartVideo } from './SmartVideo';
-import { YouTubeEmbedPlayer, YouTubePlayerHandle } from './YouTubeEmbedPlayer';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -59,9 +48,6 @@ interface ExportModalProps {
   onQuickUpload: (role: VideoRole, file: File) => void;
 }
 
-const STAGE_W = 225;
-const STAGE_H = 400;
-
 export const ExportModal: React.FC<ExportModalProps> = ({
   isOpen,
   onClose,
@@ -82,50 +68,31 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [preferMp4, setPreferMp4] = useState(true);
 
   const [isExporting, setIsExporting] = useState(false);
-  const [isYouTubeCapturing, setIsYouTubeCapturing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [statusLabel, setStatusLabel] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [policyBlocked, setPolicyBlocked] = useState(false);
   const [result, setResult] = useState<ExportResult | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const prevOpenRef = useRef(false);
 
-  // Refs for YouTube live 9:16 tab-capture stage
-  const ytCaptureStageRef = useRef<HTMLDivElement | null>(null);
-  const ytStageGameplayRef = useRef<YouTubePlayerHandle | null>(null);
-  const ytStageFacecamRef = useRef<YouTubePlayerHandle | null>(null);
-  const vidStageGameplayRef = useRef<HTMLVideoElement | null>(null);
-  const vidStageFacecamRef = useRef<HTMLVideoElement | null>(null);
-
   const formatInfo = useMemo(() => detectBestExportFormat(), []);
-  const isEmbeddedIframe = useMemo(() => {
-    try {
-      return window.self !== window.top;
-    } catch {
-      return true;
-    }
-  }, []);
 
-  // Only reset export modal state when opening/closing (never when clips array updates after save!)
+  // Only reset export modal state when opening/closing
   useEffect(() => {
     if (isOpen && !prevOpenRef.current) {
       setSelectedTarget(initialClipId || (clips.length > 0 ? clips[0].id : 'current'));
       setErrorMsg(null);
-      setPolicyBlocked(false);
       setStatusLabel(null);
       setResult(null);
       setProgress(0);
       setElapsedSec(0);
       setIsExporting(false);
-      setIsYouTubeCapturing(false);
     } else if (!isOpen && prevOpenRef.current) {
       abortRef.current?.abort();
       setIsExporting(false);
-      setIsYouTubeCapturing(false);
     }
     prevOpenRef.current = isOpen;
   }, [isOpen, initialClipId, clips]);
@@ -168,87 +135,38 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const hasYouTubeSource =
     gameplay?.sourceType === 'youtube' || facecam?.sourceType === 'youtube';
 
-  const stageZones = computeZoneBoxes(
-    STAGE_W,
-    STAGE_H,
-    targetLayout.mode,
-    targetLayout.splitRatio
-  );
-  const stageGpRect =
-    stageZones.gameplay && gameplay
-      ? computeCropAndCover(
-          gameplay.width,
-          gameplay.height,
-          stageZones.gameplay,
-          targetLayout.gameplayTransform
-        )
-      : null;
-  const stageFcRect =
-    stageZones.facecam && facecam
-      ? computeCropAndCover(
-          facecam.width,
-          facecam.height,
-          stageZones.facecam,
-          targetLayout.facecamTransform
-        )
-      : null;
-
-  const handleStartExport = async () => {
+  const handleStartDirectCut = async () => {
     if (targetDuration < 0.2) {
       setErrorMsg('Clip duration must be at least 0.2 seconds. Adjust Start/End points first.');
       return;
     }
+    if (hasYouTubeSource) {
+      setErrorMsg(
+        'Screen recording is turned off. Upload a local MP4/WebM file or load a Kick/direct video link to cut and download cleanly.'
+      );
+      return;
+    }
 
     setErrorMsg(null);
-    setPolicyBlocked(false);
-    setStatusLabel(null);
+    setStatusLabel('Preparing direct clip cut...');
     setResult(null);
     setProgress(0);
     setElapsedSec(0);
+    setIsExporting(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
-    if (hasYouTubeSource) {
-      // Request Tab Capture synchronously inside click gesture
-      let displayStream: MediaStream;
+    try {
+      let exportResult: ExportResult;
       try {
-        displayStream = await requestTabCaptureStream(fps);
-      } catch (err) {
-        if (err instanceof TabCaptureBlockedError) {
-          setPolicyBlocked(err.isPolicyBlocked);
-          setErrorMsg(err.message);
-        } else {
-          setErrorMsg(err instanceof Error ? err.message : 'Tab capture failed.');
-        }
-        return;
-      }
-
-      setIsYouTubeCapturing(true);
-      setIsExporting(true);
-
-      // Allow React to mount ytCaptureStageRef on screen before capturing
-      await new Promise<void>((r) => window.setTimeout(r, 150));
-
-      const stageEl = ytCaptureStageRef.current;
-      if (!stageEl || controller.signal.aborted) {
-        displayStream.getTracks().forEach((t) => t.stop());
-        setIsExporting(false);
-        setIsYouTubeCapturing(false);
-        return;
-      }
-
-      try {
-        const exportResult = await exportYouTubeViaTabCapture({
-          displayStream,
-          stageEl,
-          ytGameplay: ytStageGameplayRef.current,
-          ytFacecam: ytStageFacecamRef.current,
-          vidGameplay: vidStageGameplayRef.current,
-          vidFacecam: vidStageFacecamRef.current,
+        // Primary path: Direct Server FFmpeg Clip Cutting & 9:16 Compositing (ZERO screen recording!)
+        exportResult = await directCutExportShort({
+          gameplay,
+          facecam,
           startTime: targetStart,
           endTime: targetEnd,
-          facecamSyncOffset: targetLayout.facecamSyncOffset,
+          layout: targetLayout,
           resolution,
           fps,
           preferMp4,
@@ -259,58 +177,36 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             if (label) setStatusLabel(label);
           },
         });
-
-        setResult(exportResult);
-        if (selectedClip) {
-          onSaveClipExport(
-            selectedClip.id,
-            exportResult.previewUrl || exportResult.blobUrl,
-            exportResult.mimeType,
-            exportResult.extension,
-            exportResult.downloadUrl
-          );
+      } catch (directErr) {
+        if ((directErr as DOMException)?.name === 'AbortError') {
+          throw directErr;
         }
-      } catch (err) {
-        if ((err as DOMException)?.name === 'AbortError') {
-          setErrorMsg('Export cancelled.');
-        } else {
-          setErrorMsg(err instanceof Error ? err.message : 'YouTube capture export failed.');
-        }
-      } finally {
-        setIsExporting(false);
-        setIsYouTubeCapturing(false);
+        // Fallback to local Canvas compositor only if direct FFmpeg cut could not run
+        setStatusLabel('Switching to local compositor...');
+        exportResult = await exportShortVideo({
+          gameplay,
+          facecam,
+          startTime: targetStart,
+          endTime: targetEnd,
+          layout: targetLayout,
+          resolution,
+          fps,
+          preferMp4,
+          signal: controller.signal,
+          onProgress: (p, elapsed, label) => {
+            setProgress(p);
+            setElapsedSec(elapsed);
+            if (label) setStatusLabel(label);
+          },
+          onFramePreview: (srcCanvas) => {
+            const destCanvas = previewCanvasRef.current;
+            if (!destCanvas) return;
+            const ctx = destCanvas.getContext('2d');
+            if (!ctx) return;
+            ctx.drawImage(srcCanvas, 0, 0, destCanvas.width, destCanvas.height);
+          },
+        });
       }
-      return;
-    }
-
-    // Standard local file / Kick MP4 / Kick HLS / CORS URL Canvas export
-    setIsYouTubeCapturing(false);
-    setIsExporting(true);
-
-    try {
-      const exportResult = await exportShortVideo({
-        gameplay,
-        facecam,
-        startTime: targetStart,
-        endTime: targetEnd,
-        layout: targetLayout,
-        resolution,
-        fps,
-        preferMp4,
-        signal: controller.signal,
-        onProgress: (p, elapsed, label) => {
-          setProgress(p);
-          setElapsedSec(elapsed);
-          if (label) setStatusLabel(label);
-        },
-        onFramePreview: (srcCanvas) => {
-          const destCanvas = previewCanvasRef.current;
-          if (!destCanvas) return;
-          const ctx = destCanvas.getContext('2d');
-          if (!ctx) return;
-          ctx.drawImage(srcCanvas, 0, 0, destCanvas.width, destCanvas.height);
-        },
-      });
 
       setResult(exportResult);
       if (selectedClip) {
@@ -324,9 +220,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       }
     } catch (err) {
       if ((err as DOMException)?.name === 'AbortError') {
-        setErrorMsg('Export cancelled.');
+        setErrorMsg('Clip cut cancelled.');
       } else {
-        setErrorMsg(err instanceof Error ? err.message : 'Export failed.');
+        setErrorMsg(err instanceof Error ? err.message : 'Direct clip cut failed.');
       }
     } finally {
       setIsExporting(false);
@@ -336,7 +232,6 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const handleCancelExport = () => {
     abortRef.current?.abort();
     setIsExporting(false);
-    setIsYouTubeCapturing(false);
   };
 
   const safeFileName = targetName
@@ -346,11 +241,6 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const downloadFileName = result
     ? `${safeFileName || 'clipforge_short'}_${resolution}.${result.extension}`
     : 'clipforge_short.mp4';
-
-  const isFacecamActiveInCapture =
-    !targetLayout.facecamActiveRange ||
-    (elapsedSec + targetStart >= targetLayout.facecamActiveRange.start - 0.05 &&
-      elapsedSec + targetStart <= targetLayout.facecamActiveRange.end + 0.05);
 
   return (
     <div
@@ -363,9 +253,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         {/* Header */}
         <div className="px-6 py-4 border-b border-white/[0.08] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <Film className="w-4 h-4 text-violet-400" />
+            <Scissors className="w-4 h-4 text-violet-400" />
             <h2 id="export-modal-title" className="font-display text-lg font-semibold text-white">
-              Export 9:16 Vertical Short
+              Direct Cut & Download 9:16 Short
             </h2>
           </div>
           <button
@@ -390,7 +280,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   htmlFor="export-clip-select"
                   className="text-xs font-semibold text-slate-200 block"
                 >
-                  Clip to Render
+                  Clip to Cut & Download
                 </label>
                 <select
                   id="export-clip-select"
@@ -462,7 +352,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
                 <div className="space-y-1.5">
                   <span className="text-xs font-semibold text-slate-200 block">
-                    Frame Rate & Container
+                    Frame Rate & Format
                   </span>
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -475,7 +365,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                       }`}
                     >
                       <div className="text-xs font-semibold">30 fps</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">Fast encode</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">Fast cut</div>
                     </button>
 
                     <button
@@ -497,16 +387,20 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               {/* Format & Composition Summary */}
               <div className="rounded-xl border border-white/[0.08] bg-[#111521] p-4 space-y-2 text-xs">
                 <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Cut Engine</span>
+                  <span className="text-emerald-300 font-medium">
+                    Direct FFmpeg Clip Cut (No Screen Recording)
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
                   <span className="text-slate-400">Output Format</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPreferMp4((v) => !v)}
-                      className="text-sky-300 font-medium hover:underline cursor-pointer"
-                    >
-                      {preferMp4 ? 'MP4 (H.264 / AAC)' : formatInfo.label}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPreferMp4((v) => !v)}
+                    className="text-sky-300 font-medium hover:underline cursor-pointer"
+                  >
+                    {preferMp4 ? 'MP4 (H.264 / AAC)' : formatInfo.label}
+                  </button>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-slate-400">Split Layout</span>
@@ -521,52 +415,21 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               </div>
 
               {hasYouTubeSource && (
-                <div
-                  className={`rounded-xl border p-4 space-y-3 text-xs ${
-                    isEmbeddedIframe
-                      ? 'border-amber-500/35 bg-amber-500/10 text-amber-100'
-                      : 'border-sky-500/30 bg-sky-500/10 text-sky-100'
-                  }`}
-                >
+                <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 p-4 space-y-3 text-xs text-amber-100">
                   <div className="flex items-start gap-2.5">
-                    <MonitorPlay
-                      className={`w-4 h-4 shrink-0 mt-0.5 ${
-                        isEmbeddedIframe ? 'text-amber-400' : 'text-sky-400'
-                      }`}
-                    />
+                    <Film className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                     <div>
                       <p className="font-semibold text-white">
-                        {isEmbeddedIframe
-                          ? 'YouTube Export Needs Full Tab or Local File'
-                          : 'YouTube Direct Tab-Capture Export Ready'}
+                        Upload MP4/WebM or Use Kick Link for Direct Cutting
                       </p>
                       <p className="opacity-85 mt-1 leading-relaxed">
-                        {isEmbeddedIframe ? (
-                          <>
-                            This embedded preview blocks browser tab capture for YouTube iframes. Open ClipForge in a full browser tab to render & download YouTube Shorts directly, or swap in a local MP4/WebM file below (keeping all your cuts and facecam crop).
-                          </>
-                        ) : (
-                          <>
-                            Click <strong>Start Render & Export</strong> and select <strong>"This Tab"</strong> (with tab audio checked) when your browser prompts. ClipForge will capture your 9:16 split-screen + facecam crop directly into MP4.
-                          </>
-                        )}
+                        Screen recording is disabled for clean cutting. YouTube links cannot be directly cut into MP4 without screen recording, so upload the video file (MP4/WebM) below to cut and download cleanly—your marked timestamps and facecam crop stay saved.
                       </p>
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 pl-6">
-                    {isEmbeddedIframe && typeof window !== 'undefined' && (
-                      <a
-                        href={window.location.href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-semibold inline-flex items-center gap-1.5 transition-colors"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        <span>Open Studio in Full Tab</span>
-                      </a>
-                    )}
                     {gameplay?.sourceType === 'youtube' && (
-                      <label className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200 font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors">
+                      <label className="px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors">
                         <Upload className="w-3.5 h-3.5" />
                         <span>Upload Local Gameplay File</span>
                         <input
@@ -582,7 +445,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                       </label>
                     )}
                     {facecam?.sourceType === 'youtube' && facecam.derivedFromRole !== 'gameplay' && (
-                      <label className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200 font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors">
+                      <label className="px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-slate-100 font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors">
                         <Upload className="w-3.5 h-3.5" />
                         <span>Upload Local Facecam File</span>
                         <input
@@ -603,130 +466,28 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </>
           )}
 
-          {/* Rendering Progress State */}
+          {/* Direct Cutting Progress State */}
           {isExporting && (
             <div className="flex flex-col sm:flex-row items-center gap-6 py-2">
-              {isYouTubeCapturing ? (
-                <div
-                  ref={ytCaptureStageRef}
-                  style={{ width: STAGE_W, height: STAGE_H }}
-                  className="relative rounded-xl overflow-hidden border border-white/15 bg-[#05060A] shrink-0"
-                >
-                  {stageZones.gameplay && gameplay && stageGpRect && (
-                    <div
-                      style={{
-                        left: stageZones.gameplay.x,
-                        top: stageZones.gameplay.y,
-                        width: stageZones.gameplay.width,
-                        height: stageZones.gameplay.height,
-                      }}
-                      className="absolute overflow-hidden"
-                    >
-                      {gameplay.sourceType === 'youtube' && gameplay.youtubeId ? (
-                        <YouTubeEmbedPlayer
-                          ref={ytStageGameplayRef}
-                          videoId={gameplay.youtubeId}
-                          muted={targetLayout.gameplayMuted}
-                          volume={targetLayout.gameplayVolume}
-                          style={{
-                            position: 'absolute',
-                            left: stageGpRect.domLeft,
-                            top: stageGpRect.domTop,
-                            width: stageGpRect.domWidth,
-                            height: stageGpRect.domHeight,
-                            maxWidth: 'none',
-                          }}
-                        />
-                      ) : (
-                        <SmartVideo
-                          ref={vidStageGameplayRef}
-                          src={gameplay.url}
-                          isHls={gameplay.isHls}
-                          muted={targetLayout.gameplayMuted}
-                          playsInline
-                          preload="auto"
-                          style={{
-                            position: 'absolute',
-                            left: stageGpRect.domLeft,
-                            top: stageGpRect.domTop,
-                            width: stageGpRect.domWidth,
-                            height: stageGpRect.domHeight,
-                            maxWidth: 'none',
-                          }}
-                        />
-                      )}
-                    </div>
-                  )}
-
-                  {stageZones.facecam && facecam && stageFcRect && (
-                    <div
-                      style={{
-                        left: stageZones.facecam.x,
-                        top: stageZones.facecam.y,
-                        width: stageZones.facecam.width,
-                        height: stageZones.facecam.height,
-                        opacity: isFacecamActiveInCapture ? 1 : 0,
-                      }}
-                      className="absolute overflow-hidden"
-                    >
-                      {facecam.sourceType === 'youtube' && facecam.youtubeId ? (
-                        <YouTubeEmbedPlayer
-                          ref={ytStageFacecamRef}
-                          videoId={facecam.youtubeId}
-                          muted={targetLayout.facecamMuted}
-                          volume={targetLayout.facecamVolume}
-                          style={{
-                            position: 'absolute',
-                            left: stageFcRect.domLeft,
-                            top: stageFcRect.domTop,
-                            width: stageFcRect.domWidth,
-                            height: stageFcRect.domHeight,
-                            maxWidth: 'none',
-                          }}
-                        />
-                      ) : (
-                        <SmartVideo
-                          ref={vidStageFacecamRef}
-                          src={facecam.url}
-                          isHls={facecam.isHls}
-                          muted={targetLayout.facecamMuted}
-                          playsInline
-                          preload="auto"
-                          style={{
-                            position: 'absolute',
-                            left: stageFcRect.domLeft,
-                            top: stageFcRect.domTop,
-                            width: stageFcRect.domWidth,
-                            height: stageFcRect.domHeight,
-                            maxWidth: 'none',
-                          }}
-                        />
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="w-32 aspect-[9/16] rounded-xl overflow-hidden border border-white/15 bg-black shrink-0">
-                  <canvas
-                    ref={previewCanvasRef}
-                    width={180}
-                    height={320}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              )}
+              <div className="w-28 aspect-[9/16] rounded-xl overflow-hidden border border-white/15 bg-[#05060A] flex items-center justify-center shrink-0 relative">
+                <canvas
+                  ref={previewCanvasRef}
+                  width={180}
+                  height={320}
+                  className="w-full h-full object-cover"
+                />
+                <Scissors className="w-6 h-6 text-violet-400 animate-pulse absolute" />
+              </div>
 
               <div className="flex-1 w-full space-y-3">
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Loader2 className="w-4 h-4 animate-spin text-violet-400" />
                   <span>
-                    {statusLabel || `Rendering Vertical Short (${resolution} · ${fps}fps)...`}
+                    {statusLabel || `Cutting Short (${resolution} · ${fps}fps)...`}
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  {isYouTubeCapturing
-                    ? 'Capturing live 9:16 split-screen frames and audio from your YouTube tab. Keep this modal visible until finished.'
-                    : 'Compositing synchronized Gameplay + Facecam frames and mixing audio tracks locally. Keep this tab active until finished.'}
+                  Directly trimming your exact Start/End clip, applying your Facecam crop & 9:16 split layout, and mixing audio — no screen recording.
                 </p>
 
                 <div className="space-y-1.5">
@@ -762,10 +523,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <div className="flex-1 space-y-3">
                 <div className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Render Complete</span>
+                  <span>Clip Cut Complete</span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Your {result.width}×{result.height} vertical Short is ready ({result.extension.toUpperCase()} ·{' '}
+                  Your {result.width}×{result.height} vertical Short is cut and ready ({result.extension.toUpperCase()} ·{' '}
                   {((result.size || result.blob.size) / (1024 * 1024)).toFixed(2)} MB).
                 </p>
 
@@ -788,7 +549,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     onClick={() => setResult(null)}
                     className="px-4 py-2.5 rounded-lg text-xs font-medium bg-white/[0.06] hover:bg-white/[0.12] text-slate-200 transition-colors cursor-pointer"
                   >
-                    Export Another Clip
+                    Cut Another Clip
                   </button>
                 </div>
               </div>
@@ -796,24 +557,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           )}
 
           {errorMsg && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 space-y-2.5 text-xs text-red-200">
-              <div className="flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                <span>{errorMsg}</span>
-              </div>
-              {policyBlocked && typeof window !== 'undefined' && (
-                <div className="pl-6">
-                  <a
-                    href={window.location.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-semibold transition-colors"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>Open Studio in Full Tab</span>
-                  </a>
-                </div>
-              )}
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-start gap-2.5 text-xs text-red-200">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <span>{errorMsg}</span>
             </div>
           )}
         </div>
@@ -826,7 +572,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               onClick={handleCancelExport}
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-red-500/20 hover:bg-red-500/30 text-red-200 transition-colors cursor-pointer"
             >
-              Cancel Render
+              Cancel Cut
             </button>
           ) : !result ? (
             <>
@@ -839,12 +585,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               </button>
               <button
                 type="button"
-                onClick={handleStartExport}
-                disabled={!gameplay && !facecam}
+                onClick={handleStartDirectCut}
+                disabled={(!gameplay && !facecam) || hasYouTubeSource}
                 className="px-5 py-2 rounded-lg text-xs font-semibold bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white inline-flex items-center gap-2 transition-colors cursor-pointer disabled:cursor-not-allowed"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Start Render & Export</span>
+                <Scissors className="w-3.5 h-3.5" />
+                <span>Cut & Export Short</span>
               </button>
             </>
           ) : (

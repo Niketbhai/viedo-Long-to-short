@@ -12,6 +12,7 @@ export interface VideoSource {
   width: number;
   height: number;
   fileSize?: number;
+  file?: File;
   corsSafe: boolean;
   derivedFromRole?: VideoRole;
 }
